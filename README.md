@@ -2,6 +2,8 @@
 
 A private-league history dashboard for ESPN league `682600`. It includes:
 
+**Live app:** https://app-fjmoww9cfz3hzyrn3hhyfy.streamlit.app/
+
 - Weekly team and player leaderboards
 - Player season scoring leaders using each season's league settings
 - All-time owner records, championships, and playoff appearances
