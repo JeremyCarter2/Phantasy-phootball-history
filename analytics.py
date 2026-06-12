@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from functools import lru_cache
-
 import pandas as pd
 
 
@@ -189,28 +187,34 @@ def lineup_efficiency(player_history: pd.DataFrame) -> pd.DataFrame:
 
 
 def _optimal_points(roster: pd.DataFrame, slots: list[str]) -> float:
-    players = []
+    if not slots:
+        return 0.0
+
+    players: list[tuple[float, set[str]]] = []
     for _, row in roster.iterrows():
         eligible = set(str(row["Eligible Slots"]).split("|"))
         eligible.add(str(row["Position"]))
         players.append((float(row["Points"]), eligible))
 
-    @lru_cache(maxsize=None)
-    def solve(slot_index: int, used_mask: int) -> float:
-        if slot_index == len(slots):
-            return 0.0
-        best = solve(slot_index + 1, used_mask)
-        slot = slots[slot_index]
-        for index, (points, eligible) in enumerate(players):
-            if used_mask & (1 << index) or slot not in eligible:
-                continue
-            best = max(
-                best,
-                points + solve(slot_index + 1, used_mask | (1 << index)),
-            )
-        return best
+    # Track occupied lineup slots instead of used players. A fantasy lineup has
+    # far fewer slots than rostered players, keeping this calculation fast even
+    # when many seasons are selected.
+    scores = {0: 0.0}
+    for points, eligible in players:
+        next_scores = scores.copy()
+        for mask, score in scores.items():
+            for slot_index, slot in enumerate(slots):
+                slot_bit = 1 << slot_index
+                if mask & slot_bit or slot not in eligible:
+                    continue
+                new_mask = mask | slot_bit
+                next_scores[new_mask] = max(
+                    next_scores.get(new_mask, float("-inf")),
+                    score + points,
+                )
+        scores = next_scores
 
-    return solve(0, 0)
+    return max(scores.values(), default=0.0)
 
 
 def transaction_summary(team_seasons: pd.DataFrame) -> pd.DataFrame:
