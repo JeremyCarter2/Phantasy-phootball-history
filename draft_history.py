@@ -42,6 +42,12 @@ def available_draft_seasons() -> list[int]:
     )
 
 
+def load_all_drafts() -> pd.DataFrame:
+    drafts = [load_draft_history(season) for season in available_draft_seasons()]
+    drafts = [draft for draft in drafts if not draft.empty]
+    return pd.concat(drafts, ignore_index=True) if drafts else _empty_draft()
+
+
 def load_draft_history(season: int) -> pd.DataFrame:
     path = DRAFT_DIR / f"{season}.csv"
     if not path.exists():
@@ -52,16 +58,21 @@ def load_draft_history(season: int) -> pd.DataFrame:
     if not rows:
         return _empty_draft()
 
-    headers = rows[0]
+    header_index, owner_columns = _find_owner_columns(rows)
+    if not owner_columns:
+        return _empty_draft()
     purchases = []
-    for owner_column in range(0, len(headers), 2):
-        draft_owner = headers[owner_column].strip()
-        owner = OWNER_NAMES.get(draft_owner, draft_owner)
-        for purchase_number, row in enumerate(rows[1:], start=1):
+    for owner_column, draft_owner in owner_columns:
+        owner = _owner_name(draft_owner)
+        purchase_number = 0
+        for row in rows[header_index + 1 :]:
+            if owner_column + 1 >= len(row):
+                continue
             player_text = row[owner_column].strip()
             price_text = row[owner_column + 1].strip()
-            if not player_text:
+            if not PLAYER_PATTERN.match(player_text) or not price_text.startswith("$"):
                 continue
+            purchase_number += 1
             parsed = _parse_player(player_text)
             purchases.append(
                 {
@@ -173,7 +184,7 @@ def _parse_player(value: str) -> dict[str, object]:
     position = match.group("position").strip()
     return {
         "Player": match.group("player").strip(),
-        "Position": "D/ST" if position == "DS" else position,
+        "Position": "D/ST" if position in {"DS", "DST"} else position,
         "NFL Team": match.group("nfl_team").strip(),
         "Bye Week": int(bye) if bye else None,
     }
@@ -182,6 +193,32 @@ def _parse_player(value: str) -> dict[str, object]:
 def _parse_price(value: str) -> int:
     digits = re.sub(r"\D", "", value)
     return int(digits) if digits else 0
+
+
+def _find_owner_columns(
+    rows: list[list[str]],
+) -> tuple[int, list[tuple[int, str]]]:
+    best_index = -1
+    best_columns: list[tuple[int, str]] = []
+    for row_index, row in enumerate(rows[:6]):
+        columns = [
+            (column, value.strip())
+            for column, value in enumerate(row)
+            if _owner_name(value.strip()) in OWNER_NAMES.values()
+        ]
+        if len(columns) > len(best_columns):
+            best_index = row_index
+            best_columns = columns
+    return best_index, best_columns
+
+
+def _owner_name(value: str) -> str:
+    normalized = value.strip().upper().rstrip(".")
+    aliases = {
+        **{key.upper(): owner for key, owner in OWNER_NAMES.items()},
+        "MATT D": "Matt Davis",
+    }
+    return aliases.get(normalized, value.strip())
 
 
 def _match_key(row: pd.Series) -> str:

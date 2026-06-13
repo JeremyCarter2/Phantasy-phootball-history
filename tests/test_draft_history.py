@@ -2,6 +2,7 @@ import pandas as pd
 
 from draft_history import (
     draft_value,
+    load_all_drafts,
     load_draft_history,
     owner_draft_summary,
     position_spend,
@@ -17,6 +18,26 @@ def test_2025_draft_parses_all_purchases_and_budgets():
     assert set(summary["Spend"]) == {200}
     assert "Kyle Hockert" in set(draft["Owner"])
     assert "Matthew Sheets" in set(draft["Owner"])
+
+
+def test_all_historical_draft_exports_parse():
+    expected_rows = {
+        2020: 180,
+        2021: 190,
+        2022: 192,
+        2023: 191,
+        2024: 192,
+        2025: 180,
+    }
+    for season, rows in expected_rows.items():
+        draft = load_draft_history(season)
+        assert len(draft) == rows
+        assert draft["Owner"].nunique() == 12
+        assert set(draft["Position"]) == {"QB", "RB", "WR", "TE", "D/ST"}
+
+    combined = load_all_drafts()
+    assert len(combined) == sum(expected_rows.values())
+    assert set(combined["Season"]) == set(expected_rows)
 
 
 def test_2025_draft_player_fields_and_position_spend():

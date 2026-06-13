@@ -34,6 +34,7 @@ from query_tool import answer_query
 from draft_history import (
     available_draft_seasons,
     draft_value,
+    load_all_drafts,
     load_draft_history,
     owner_draft_summary,
     owner_draft_value,
@@ -437,6 +438,7 @@ elif page == "Draft History":
     else:
         draft_season = st.selectbox("Draft season", draft_seasons)
         draft = load_draft_history(draft_season)
+        all_drafts = load_all_drafts()
         summary = owner_draft_summary(draft)
         st.caption(
             "Auction prices come from the ESPN draft export. Owner names are "
@@ -511,6 +513,36 @@ elif page == "Draft History":
                 value[
                     value["Total Points"].notna()
                 ].sort_values("Points / $", ascending=False).head(50)
+            )
+
+        with st.expander("Across all imported drafts"):
+            st.subheader("Most expensive purchases")
+            show_table(
+                all_drafts.sort_values(
+                    ["Price", "Season"], ascending=False
+                ).head(50)
+            )
+            st.subheader("Owner price tendencies")
+            owner_tendencies = all_drafts.groupby(
+                ["Season", "Owner"], as_index=False
+            ).agg(
+                Players=("Player", "count"),
+                Spend=("Price", "sum"),
+                **{
+                    "Average Price": ("Price", "mean"),
+                    "Highest Price": ("Price", "max"),
+                },
+            )
+            owner_tendencies["Average Price"] = owner_tendencies[
+                "Average Price"
+            ].round(2)
+            show_table(owner_tendencies)
+            st.line_chart(
+                owner_tendencies.pivot(
+                    index="Season",
+                    columns="Owner",
+                    values="Highest Price",
+                )
             )
 
 elif page == "Leaderboards":
