@@ -12,19 +12,24 @@ from analytics import (
     rivalry_history,
 )
 from espn_history import build_scoring_leaders_dataframe
+from draft_history import all_draft_value
 
 
 POSITION_ALIASES = {
     "qb": "QB",
+    "qbs": "QB",
     "quarterback": "QB",
     "quarterbacks": "QB",
     "rb": "RB",
+    "rbs": "RB",
     "running back": "RB",
     "running backs": "RB",
     "wr": "WR",
+    "wrs": "WR",
     "wide receiver": "WR",
     "wide receivers": "WR",
     "te": "TE",
+    "tes": "TE",
     "tight end": "TE",
     "tight ends": "TE",
     "k": "K",
@@ -69,6 +74,7 @@ def answer_query(
     team_history: pd.DataFrame,
     team_seasons: pd.DataFrame,
     player_history: pd.DataFrame,
+    draft_history: pd.DataFrame | None = None,
 ) -> QueryResult:
     query = _normalize(question)
     season = _extract_season(query, team_seasons)
@@ -78,6 +84,16 @@ def answer_query(
 
     if not query:
         return _help()
+
+    draft_result = _answer_draft_query(
+        query,
+        season,
+        draft_history if draft_history is not None else pd.DataFrame(),
+        player_history,
+        team_seasons,
+    )
+    if draft_result is not None:
+        return draft_result
 
     player_result = _answer_player_query(query, players, player_history.empty)
     if player_result is not None:
@@ -302,6 +318,150 @@ def answer_query(
     return _help()
 
 
+def _answer_draft_query(
+    query: str,
+    season: int | None,
+    drafts: pd.DataFrame,
+    player_history: pd.DataFrame,
+    team_seasons: pd.DataFrame,
+) -> QueryResult | None:
+    draft_terms = (
+        "draft",
+        "drafted",
+        "auction",
+        "paid",
+        "spent",
+        "expensive",
+        "value pick",
+        "points per dollar",
+        "points/$",
+    )
+    if not _contains(query, *draft_terms):
+        return None
+    if drafts.empty:
+        return QueryResult("No draft history has been imported.")
+
+    available = set(drafts["Season"].astype(int))
+    if season is None:
+        explicit = {
+            int(year) for year in re.findall(r"\b(20\d{2})\b", query)
+        } & available
+        season = (
+            max(explicit)
+            if explicit
+            else _relative_draft_season(query, available)
+        )
+    selected = _season_filter(drafts, season)
+    position = _extract_position(query)
+    if position is not None:
+        selected = selected[selected["Position"] == position]
+    managers = _matching_managers(query, team_seasons["Manager"])
+    if managers:
+        selected = selected[selected["Owner"] == managers[0]]
+    player_name = _matching_draft_player(query, drafts)
+    if player_name is not None:
+        selected = selected[
+            selected["Player"].map(_normalize_player_name)
+            == _normalize_player_name(player_name)
+        ]
+    if selected.empty:
+        return QueryResult("No matching draft purchases were found.")
+
+    top_n = _extract_top_n(query)
+    lowest = _contains(query, "cheapest", "least expensive", "lowest price")
+
+    if _contains(
+        query,
+        "value",
+        "points per dollar",
+        "points/$",
+        "bust",
+        "return",
+    ):
+        if player_history.empty:
+            return _player_required(
+                "That draft-value question needs player box-score data."
+            )
+        values = all_draft_value(selected, player_history)
+        values = values[values["Total Points"].notna()]
+        if values.empty:
+            return QueryResult(
+                "No drafted players could be matched to the loaded player archive."
+            )
+        bust = _contains(query, "worst", "bust", "least value")
+        values = values.sort_values(
+            ["Points / $", "Total Points"],
+            ascending=[bust, bust],
+        ).head(top_n)
+        row = values.iloc[0]
+        direction = "worst" if bust else "best"
+        return QueryResult(
+            answer=(
+                f"{row['Player']} was the {direction} draft value: "
+                f"{row['Owner']} paid ${int(row['Price'])} in "
+                f"{int(row['Season'])}, and the player scored "
+                f"{row['Total Points']:.2f} points "
+                f"({row['Points / $']:.2f} per dollar)."
+            ),
+            title=f"{direction.title()} draft values",
+            table=values,
+        )
+
+    if player_name is not None or _contains(query, "who drafted"):
+        purchases = selected.sort_values("Season")
+        row = purchases.iloc[-1]
+        if len(purchases) == 1:
+            answer = (
+                f"{row['Owner']} drafted {row['Player']} for "
+                f"${int(row['Price'])} in {int(row['Season'])}."
+            )
+        else:
+            answer = (
+                f"{row['Player']} was drafted {len(purchases)} times in the "
+                "matching seasons; the table shows each owner and price."
+            )
+        return QueryResult(
+            answer=answer,
+            title=f"{row['Player']} draft history",
+            table=purchases,
+        )
+
+    if _contains(query, "spent", "spending"):
+        grouped = selected.groupby("Owner", as_index=False).agg(
+            Players=("Player", "count"),
+            Spend=("Price", "sum"),
+            **{"Average Price": ("Price", "mean")},
+        )
+        grouped["Average Price"] = grouped["Average Price"].round(2)
+        grouped = grouped.sort_values("Spend", ascending=lowest).head(top_n)
+        row = grouped.iloc[0]
+        position_text = f" on {position}s" if position else ""
+        direction = "least" if lowest else "most"
+        return QueryResult(
+            answer=(
+                f"{row['Owner']} spent the {direction}{position_text}: "
+                f"${int(row['Spend'])} across {int(row['Players'])} players."
+            ),
+            title="Draft spending",
+            table=grouped,
+        )
+
+    purchases = selected.sort_values(
+        ["Price", "Season"], ascending=[lowest, False]
+    ).head(top_n)
+    row = purchases.iloc[0]
+    direction = "cheapest" if lowest else "most expensive"
+    return QueryResult(
+        answer=(
+            f"{row['Player']} was the {direction} matching draft purchase: "
+            f"{row['Owner']} paid ${int(row['Price'])} in "
+            f"{int(row['Season'])}."
+        ),
+        title=f"{direction.title()} draft purchases",
+        table=purchases,
+    )
+
+
 def _answer_player_query(
     query: str,
     players: pd.DataFrame,
@@ -469,14 +629,17 @@ def _help() -> QueryResult:
     return QueryResult(
         "I could not confidently match that question yet. Try asking about "
         "highest or lowest scores, champions, wins, luck, rivalries, player "
-        "performances, scoring leaders, or lineup decisions.",
+        "performances, scoring leaders, lineup decisions, draft prices, "
+        "position spending, or post-draft value.",
         title="Try another question",
     )
 
 
-def _player_required() -> QueryResult:
+def _player_required(
+    message: str = "That question needs player box-score data.",
+) -> QueryResult:
     return QueryResult(
-        "That question needs player box-score data. Turn on **Include player "
+        f"{message} Turn on **Include player "
         "and lineup questions** in the sidebar and reload the archive.",
         title="Player data required",
         needs_players=True,
@@ -531,11 +694,50 @@ def _matching_player(query: str, players: pd.DataFrame) -> str | None:
     return next((name for name in names if name.casefold() in query), None)
 
 
+def _matching_draft_player(query: str, drafts: pd.DataFrame) -> str | None:
+    if drafts.empty or "Player" not in drafts:
+        return None
+    normalized_query = _normalize_player_name(query)
+    names = sorted(
+        set(drafts["Player"].dropna().astype(str)),
+        key=len,
+        reverse=True,
+    )
+    return next(
+        (
+            name
+            for name in names
+            if _normalize_player_name(name) in normalized_query
+        ),
+        None,
+    )
+
+
+def _normalize_player_name(value: str) -> str:
+    normalized = re.sub(
+        r"\b(jr|sr|ii|iii|iv)\b\.?",
+        "",
+        value.casefold(),
+    )
+    return re.sub(r"[^a-z0-9]+", "", normalized)
+
+
 def _extract_top_n(query: str) -> int:
     match = re.search(r"\btop\s+(\d{1,2})\b", query)
     if not match:
         return 10
     return min(50, max(1, int(match.group(1))))
+
+
+def _relative_draft_season(
+    query: str,
+    available: set[int],
+) -> int | None:
+    if not available:
+        return None
+    if _contains(query, "last year", "last season", "latest draft"):
+        return max(available)
+    return None
 
 
 def _extract_stat(query: str) -> tuple[str, str] | None:

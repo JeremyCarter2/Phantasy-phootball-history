@@ -152,6 +152,26 @@ def draft_value(
     )
 
 
+def all_draft_value(
+    drafts: pd.DataFrame,
+    player_history: pd.DataFrame,
+) -> pd.DataFrame:
+    if drafts.empty or player_history.empty:
+        return pd.DataFrame()
+    values = [
+        draft_value(group, player_history)
+        for _, group in drafts.groupby("Season")
+    ]
+    values = [value for value in values if not value.empty]
+    if not values:
+        return pd.DataFrame()
+    return pd.concat(values, ignore_index=True).sort_values(
+        ["Points / $", "Total Points"],
+        ascending=False,
+        ignore_index=True,
+    )
+
+
 def owner_draft_value(value: pd.DataFrame) -> pd.DataFrame:
     if value.empty:
         return pd.DataFrame()

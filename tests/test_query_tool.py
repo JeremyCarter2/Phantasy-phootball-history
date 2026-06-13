@@ -1,5 +1,6 @@
 import pandas as pd
 
+from draft_history import load_all_drafts
 from query_tool import answer_query
 from test_analytics import team_history, team_seasons
 
@@ -145,3 +146,57 @@ def test_stat_query_reports_tied_leaders():
 
     assert "Alpha Receiver and Beta Receiver" in result.answer
     assert "tied" in result.answer
+
+
+def test_draft_query_finds_most_expensive_purchase():
+    result = answer_query(
+        "What was the most expensive draft pick in 2023?",
+        team_history(),
+        player_team_seasons(),
+        pd.DataFrame(),
+        load_all_drafts(),
+    )
+
+    assert "Josh Allen" in result.answer
+    assert "$59" in result.answer
+
+
+def test_draft_query_summarizes_position_spending():
+    result = answer_query(
+        "Who spent the most on QBs in the 2025 draft?",
+        team_history(),
+        player_team_seasons(),
+        pd.DataFrame(),
+        load_all_drafts(),
+    )
+
+    assert "Owner" in result.table
+    assert "Spend" in result.table
+
+
+def test_draft_query_tracks_player_across_suffix_variants():
+    result = answer_query(
+        "Who drafted Patrick Mahomes each year?",
+        team_history(),
+        player_team_seasons(),
+        pd.DataFrame(),
+        load_all_drafts(),
+    )
+
+    assert len(result.table) >= 5
+    assert set(result.table["Player"]) <= {
+        "Patrick Mahomes",
+        "Patrick Mahomes II",
+    }
+
+
+def test_draft_value_query_requires_player_data():
+    result = answer_query(
+        "What was the best value pick in the 2025 draft?",
+        team_history(),
+        player_team_seasons(),
+        pd.DataFrame(),
+        load_all_drafts(),
+    )
+
+    assert result.needs_players

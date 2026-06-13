@@ -404,7 +404,8 @@ elif page == "Query Tool":
         "championships?”, “What is the rivalry between Alex Jeli and Cameron "
         "Dixon?”, “Who was the best WR in 2020?”, or “What was Justin "
         "Jefferson's highest-scoring week?”, or “Who had the most catches "
-        "last year?”"
+        "last year?”, “Who drafted Patrick Mahomes each year?”, or “What was "
+        "the best value pick in the 2025 draft?”"
     )
     with st.form("archive-query"):
         question = st.text_input(
@@ -421,6 +422,7 @@ elif page == "Query Tool":
             team_history,
             team_seasons,
             player_history,
+            load_all_drafts(),
         )
         st.subheader(result.title)
         if result.needs_players:
