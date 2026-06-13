@@ -205,8 +205,7 @@ def answer_query(
             champion = seasons.sort_values("Final Standing").iloc[0]
             return QueryResult(
                 answer=(
-                    f"{champion['Manager']} won the {season} championship as "
-                    f"{champion['Team']}."
+                    f"{champion['Manager']} won the {season} championship."
                 ),
                 title=f"{season} champion",
                 table=pd.DataFrame([champion]),
@@ -237,8 +236,8 @@ def answer_query(
         row = games.loc[games["Score"].idxmax()]
         return QueryResult(
             answer=(
-                f"{row['Manager']} scored {row['Score']:.2f} as {row['Team']} "
-                f"in Week {int(row['Week'])}, {int(row['Season'])}."
+                f"{row['Manager']} scored {row['Score']:.2f} in Week "
+                f"{int(row['Week'])}, {int(row['Season'])}."
             ),
             title="Highest team score",
             table=pd.DataFrame([row]),
@@ -248,8 +247,8 @@ def answer_query(
         row = games.loc[games["Score"].idxmin()]
         return QueryResult(
             answer=(
-                f"{row['Manager']} scored {row['Score']:.2f} as {row['Team']} "
-                f"in Week {int(row['Week'])}, {int(row['Season'])}."
+                f"{row['Manager']} scored {row['Score']:.2f} in Week "
+                f"{int(row['Week'])}, {int(row['Season'])}."
             ),
             title="Lowest team score",
             table=pd.DataFrame([row]),
@@ -388,7 +387,6 @@ def _answer_player_query(
                 **{
                     "NFL Team": ("NFL Team", _latest_nonempty),
                     "Managers": ("Manager", _unique),
-                    "Fantasy Teams": ("Fantasy Team", _unique),
                     column: (column, "sum"),
                     "Weeks Rostered": ("Week", "nunique"),
                 }

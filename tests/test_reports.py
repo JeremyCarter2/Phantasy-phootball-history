@@ -6,12 +6,22 @@ from reports import archive_html_report, csv_download
 def test_csv_download_hides_owner_key():
     data = csv_download(
         pd.DataFrame(
-            [{"Owner Key": "secret-key", "Manager": "Alex", "Wins": 10}]
+            [
+                {
+                    "Owner Key": "secret-key",
+                    "Manager": "Alex",
+                    "Team": "Changing Team Name",
+                    "Fantasy Team": "Another Team Name",
+                    "Wins": 10,
+                }
+            ]
         )
     ).decode()
 
     assert "Owner Key" not in data
     assert "secret-key" not in data
+    assert "Changing Team Name" not in data
+    assert "Another Team Name" not in data
     assert "Owner,Wins" in data
 
 
@@ -65,3 +75,5 @@ def test_html_report_builds_without_player_data():
     assert "Phantasy Phootball History" in report
     assert "All-Time Owners" in report
     assert "secret-key" not in report
+    assert ">A<" not in report
+    assert ">Bye<" not in report

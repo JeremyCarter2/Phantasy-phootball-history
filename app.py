@@ -294,6 +294,17 @@ def show_table(frame: pd.DataFrame, height: int | None = None) -> None:
                 "Owner A Key",
                 "Owner B Key",
                 "Opponent Owner Key",
+                "Team",
+                "Opponent",
+                "Fantasy Team",
+                "Fantasy Teams",
+                "Teams",
+                "Team Names A",
+                "Team Names B",
+                "Team A",
+                "Team B",
+                "From Team",
+                "To Team",
             )
             if column in frame.columns
         ]
@@ -364,8 +375,7 @@ if page == "Overview":
     highest = records["Highest score"]
     st.info(
         f"Archive record: {highest['Manager']} scored {highest['Score']:.2f} "
-        f"as {highest['Team']} in Week {int(highest['Week'])}, "
-        f"{int(highest['Season'])}."
+        f"in Week {int(highest['Week'])}, {int(highest['Season'])}."
     )
 
 elif page == "Query Tool":
@@ -407,19 +417,19 @@ elif page == "Query Tool":
 
 elif page == "Leaderboards":
     st.header(f"Leaderboards | {season_label}")
-    choices = ["Weekly teams"]
+    choices = ["Weekly owner scores"]
     if not player_history.empty:
         choices += ["Weekly players", "Season scoring leaders"]
     leaderboard_type = st.radio("Leaderboard", choices, horizontal=True)
     top_n = st.slider("Show", 10, 100, 25, 5)
 
-    if leaderboard_type == "Weekly teams":
+    if leaderboard_type == "Weekly owner scores":
         board = team_history.sort_values("Score", ascending=False).head(top_n)
         show_table(
             board[
                 [
-                    "Season", "Week", "Manager", "Team", "Score",
-                    "Opponent Manager", "Opponent", "Opponent Score",
+                    "Season", "Week", "Manager", "Score",
+                    "Opponent Manager", "Opponent Score",
                     "Margin", "Result", "Season Phase",
                 ]
             ]
@@ -448,7 +458,7 @@ elif page == "Leaderboards":
             board[
                 [
                     "Season", "Week", "Player", "Position", "NFL Team",
-                    "Manager", "Fantasy Team", "Points", "Lineup Slot",
+                    "Manager", "Points", "Lineup Slot",
                     "Season Phase",
                 ]
             ]
@@ -511,7 +521,7 @@ elif page == "Luck & All-Play":
     show_table(
         season_luck[
             [
-                "Manager", "Team", "Wins", "Expected Wins", "Luck",
+                "Manager", "Wins", "Expected Wins", "Luck",
                 "All-Play Wins", "All-Play Losses", "All-Play %"
             ]
         ]
@@ -555,8 +565,8 @@ elif page == "Records":
     show_table(
         team_history.sort_values("Score", ascending=False).head(50)[
             [
-                "Season", "Week", "Manager", "Team", "Score",
-                "Opponent Manager", "Opponent", "Margin", "Season Phase",
+                "Season", "Week", "Manager", "Score",
+                "Opponent Manager", "Margin", "Season Phase",
             ]
         ]
     )
@@ -565,7 +575,6 @@ elif page == "Lineup Decisions":
     st.header(f"Lineup Decisions | {season_label}")
     efficiency = lineup_efficiency(player_history)
     summary = efficiency.groupby(["Owner Key", "Manager"], as_index=False).agg(
-        Teams=("Team", lambda values: ", ".join(dict.fromkeys(values))),
         Weeks=("Week", "count"),
         **{
             "Actual Points": ("Actual Points", "sum"),
@@ -633,16 +642,19 @@ elif page == "Season Recap":
     champion = season_teams.loc[season_teams["Final Standing"].idxmin()]
     high = season_games.loc[season_games["Score"].idxmax()]
     cols = st.columns(4)
-    cols[0].metric("Champion", champion["Team"], champion["Manager"])
+    cols[0].metric("Champion", champion["Manager"])
     cols[1].metric("Best record", f"{season_teams['Wins'].max()} wins")
-    cols[2].metric("Highest week", f"{high['Score']:.2f}", high["Team"])
-    cols[3].metric("Most active", season_teams.loc[season_teams["Acquisitions"].idxmax(), "Team"])
+    cols[2].metric("Highest week", f"{high['Score']:.2f}", high["Manager"])
+    cols[3].metric(
+        "Most active",
+        season_teams.loc[season_teams["Acquisitions"].idxmax(), "Manager"],
+    )
 
     st.subheader("Final standings")
     show_table(
         season_teams.sort_values("Final Standing")[
             [
-                "Final Standing", "Team", "Manager", "Wins", "Losses",
+                "Final Standing", "Manager", "Wins", "Losses",
                 "Points For", "Points Against", "Acquisitions", "Trades",
             ]
         ]
@@ -657,9 +669,9 @@ elif page == "Season Recap":
 with st.expander("Data notes"):
     st.write(
         f"League {LEAGUE_ID} is read through ESPN's unofficial Fantasy API. "
-        "Owner names come from ESPN owner records. Team names may change "
-        "between seasons. Older seasons or detailed transactions may have "
-        "been removed by ESPN."
+        "League history is presented by owner because fantasy team names may "
+        "change between seasons. Older seasons or detailed transactions may "
+        "have been removed by ESPN."
     )
 
 report_html = archive_html_report(

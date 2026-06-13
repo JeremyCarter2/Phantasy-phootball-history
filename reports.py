@@ -19,6 +19,17 @@ HIDDEN_COLUMNS = {
     "Owner A Key",
     "Owner B Key",
     "Opponent Owner Key",
+    "Team",
+    "Opponent",
+    "Fantasy Team",
+    "Fantasy Teams",
+    "Teams",
+    "Team Names A",
+    "Team Names B",
+    "Team A",
+    "Team B",
+    "From Team",
+    "To Team",
 }
 
 
@@ -38,7 +49,7 @@ def archive_html_report(
         ("Rivalries", rivalry_history(team_history).head(100)),
         ("Transaction Activity", transaction_summary(team_seasons)),
         (
-            "Highest Team Scores",
+            "Highest Owner Scores",
             team_history.sort_values("Score", ascending=False).head(50),
         ),
     ]
