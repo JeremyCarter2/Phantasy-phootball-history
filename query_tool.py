@@ -36,6 +36,25 @@ POSITION_ALIASES = {
     "defenses": "D/ST",
 }
 
+STAT_ALIASES = {
+    "catches": ("Receptions", "receptions"),
+    "catch": ("Receptions", "receptions"),
+    "receptions": ("Receptions", "receptions"),
+    "reception": ("Receptions", "receptions"),
+    "targets": ("Targets", "targets"),
+    "target": ("Targets", "targets"),
+    "receiving yards": ("Receiving Yards", "receiving yards"),
+    "receiving touchdowns": ("Receiving TDs", "receiving touchdowns"),
+    "receiving tds": ("Receiving TDs", "receiving touchdowns"),
+    "rushing yards": ("Rushing Yards", "rushing yards"),
+    "rushing touchdowns": ("Rushing TDs", "rushing touchdowns"),
+    "rushing tds": ("Rushing TDs", "rushing touchdowns"),
+    "passing yards": ("Passing Yards", "passing yards"),
+    "passing touchdowns": ("Passing TDs", "passing touchdowns"),
+    "passing tds": ("Passing TDs", "passing touchdowns"),
+    "interceptions": ("Interceptions", "interceptions"),
+}
+
 
 @dataclass
 class QueryResult:
@@ -291,6 +310,7 @@ def _answer_player_query(
 ) -> QueryResult | None:
     position = _extract_position(query)
     player_name = _matching_player(query, players)
+    stat = _extract_stat(query)
     player_terms = (
         "player",
         "scoring leader",
@@ -303,6 +323,7 @@ def _answer_player_query(
     is_player_query = (
         position is not None
         or player_name is not None
+        or stat is not None
         or _contains(query, *player_terms)
     )
     if not is_player_query:
@@ -337,6 +358,66 @@ def _answer_player_query(
         "single-game",
     )
     lowest = _contains(query, "worst", "lowest", "fewest")
+
+    if stat is not None:
+        column, label = stat
+        if column not in filtered:
+            return QueryResult(
+                f"The loaded player archive does not contain {label}. Reload "
+                "the archive to fetch the expanded player statistics."
+            )
+        if weekly:
+            board = filtered.sort_values(column, ascending=lowest).head(top_n)
+            row = board.iloc[0]
+            return QueryResult(
+                answer=(
+                    f"{row['Player']} had the most {label} in a week with "
+                    f"{_format_stat(row[column])} in Week {int(row['Week'])}, "
+                    f"{int(row['Season'])}."
+                ),
+                title=f"Weekly {label} leaders",
+                table=board,
+            )
+        totals = (
+            filtered.groupby(
+                ["Season", "Player", "Position"],
+                as_index=False,
+                dropna=False,
+            )
+            .agg(
+                **{
+                    "NFL Team": ("NFL Team", _latest_nonempty),
+                    "Managers": ("Manager", _unique),
+                    "Fantasy Teams": ("Fantasy Team", _unique),
+                    column: (column, "sum"),
+                    "Weeks Rostered": ("Week", "nunique"),
+                }
+            )
+            .sort_values(column, ascending=lowest)
+            .head(top_n)
+        )
+        row = totals.iloc[0]
+        if player_name is not None:
+            answer = (
+                f"{row['Player']} recorded {_format_stat(row[column])} "
+                f"{label} in {int(row['Season'])}."
+            )
+        else:
+            tied = totals[totals[column] == row[column]]["Player"].tolist()
+            leaders = " and ".join(tied[:3])
+            verb = "tied for the most" if len(tied) > 1 else "had the most"
+            answer = (
+                f"{leaders} {verb} {label} in {int(row['Season'])} with "
+                f"{_format_stat(row[column])} each."
+                if len(tied) > 1
+                else f"{leaders} {verb} {label} in {int(row['Season'])} with "
+                f"{_format_stat(row[column])}."
+            )
+        return QueryResult(
+            answer=answer,
+            title=f"Season {label} leaders",
+            table=totals,
+        )
 
     if player_name is not None and not weekly:
         by_season = build_scoring_leaders_dataframe(filtered)
@@ -416,7 +497,11 @@ def _extract_season(query: str, team_seasons: pd.DataFrame) -> int | None:
     years = {int(year) for year in re.findall(r"\b(20\d{2})\b", query)}
     available = set(team_seasons["Season"].astype(int))
     matches = years & available
-    return max(matches) if matches else None
+    if matches:
+        return max(matches)
+    if _contains(query, "last year", "last season", "latest season"):
+        return max(available) if available else None
+    return None
 
 
 def _season_filter(frame: pd.DataFrame, season: int | None) -> pd.DataFrame:
@@ -453,3 +538,26 @@ def _extract_top_n(query: str) -> int:
     if not match:
         return 10
     return min(50, max(1, int(match.group(1))))
+
+
+def _extract_stat(query: str) -> tuple[str, str] | None:
+    for alias in sorted(STAT_ALIASES, key=len, reverse=True):
+        if re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", query):
+            return STAT_ALIASES[alias]
+    return None
+
+
+def _latest_nonempty(values: pd.Series) -> str:
+    for value in reversed(values.dropna().astype(str).tolist()):
+        if value:
+            return value
+    return ""
+
+
+def _unique(values: pd.Series) -> str:
+    return ", ".join(dict.fromkeys(values.dropna().astype(str)))
+
+
+def _format_stat(value: float) -> str:
+    number = float(value)
+    return str(int(number)) if number.is_integer() else f"{number:.2f}"

@@ -53,6 +53,7 @@ PLAYER_PAGES = {
     "Season Recap",
 }
 DOWNLOAD_INDEX = 0
+PLAYER_DATA_VERSION = 2
 
 st.set_page_config(
     page_title="Phantasy Phootball History",
@@ -108,6 +109,7 @@ def load_player_season(
     season: int,
     _espn_s2: str,
     _swid: str,
+    _data_version: int = PLAYER_DATA_VERSION,
 ) -> PlayerSeasonResult:
     return fetch_player_season(season, _espn_s2, _swid)
 
@@ -132,7 +134,13 @@ def load_archive_cached(
             ] = ("team", season)
             if include_players:
                 jobs[
-                    executor.submit(load_player_season, season, _espn_s2, _swid)
+                    executor.submit(
+                        load_player_season,
+                        season,
+                        _espn_s2,
+                        _swid,
+                        PLAYER_DATA_VERSION,
+                    )
                 ] = ("player", season)
 
         for future in as_completed(jobs):
@@ -370,7 +378,8 @@ elif page == "Query Tool":
         "Examples: “Who had the highest score in 2023?”, “Who has the most "
         "championships?”, “What is the rivalry between Alex Jeli and Cameron "
         "Dixon?”, “Who was the best WR in 2020?”, or “What was Justin "
-        "Jefferson's highest-scoring week?”"
+        "Jefferson's highest-scoring week?”, or “Who had the most catches "
+        "last year?”"
     )
     with st.form("archive-query"):
         question = st.text_input(

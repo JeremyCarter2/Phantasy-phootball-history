@@ -52,24 +52,28 @@ def player_history():
                 "Season": 2020, "Week": 1, "Player": "Alpha Receiver",
                 "Position": "WR", "NFL Team": "MIN", "Manager": "Alex",
                 "Fantasy Team": "A", "Points": 20.0,
+                "Receptions": 7.0,
                 "Lineup Status": "Starter",
             },
             {
                 "Season": 2020, "Week": 2, "Player": "Alpha Receiver",
                 "Position": "WR", "NFL Team": "MIN", "Manager": "Alex",
                 "Fantasy Team": "A", "Points": 25.0,
+                "Receptions": 8.0,
                 "Lineup Status": "Starter",
             },
             {
                 "Season": 2020, "Week": 1, "Player": "Beta Receiver",
                 "Position": "WR", "NFL Team": "DET", "Manager": "Blair",
                 "Fantasy Team": "B", "Points": 30.0,
+                "Receptions": 12.0,
                 "Lineup Status": "Starter",
             },
             {
                 "Season": 2020, "Week": 1, "Player": "Gamma Runner",
                 "Position": "RB", "NFL Team": "GB", "Manager": "Casey",
                 "Fantasy Team": "C", "Points": 40.0,
+                "Receptions": 2.0,
                 "Lineup Status": "Starter",
             },
         ]
@@ -115,3 +119,29 @@ def test_named_player_query_returns_season_history():
     )
 
     assert "45.00" in result.answer
+
+
+def test_most_catches_last_year_uses_latest_loaded_season():
+    result = answer_query(
+        "What player had the most catches last year?",
+        team_history(),
+        player_team_seasons(),
+        player_history(),
+    )
+
+    assert "Alpha Receiver" in result.answer
+    assert "15" in result.answer
+
+
+def test_stat_query_reports_tied_leaders():
+    history = player_history()
+    history.loc[history["Player"] == "Beta Receiver", "Receptions"] = 15.0
+    result = answer_query(
+        "Who had the most catches last year?",
+        team_history(),
+        player_team_seasons(),
+        history,
+    )
+
+    assert "Alpha Receiver and Beta Receiver" in result.answer
+    assert "tied" in result.answer

@@ -201,6 +201,7 @@ def extract_player_performances(
                 seen.add(unique_key)
 
                 slot = getattr(player, "slot_position", "")
+                breakdown = getattr(player, "breakdown", {}) or {}
                 rows.append(
                     {
                         "Season": season,
@@ -213,6 +214,19 @@ def extract_player_performances(
                         "Manager": manager,
                         "Fantasy Team": team.team_name,
                         "Points": round(float(getattr(player, "points", 0)), 2),
+                        "Receptions": _stat(breakdown, "receivingReceptions"),
+                        "Targets": _stat(breakdown, "receivingTargets"),
+                        "Receiving Yards": _stat(breakdown, "receivingYards"),
+                        "Receiving TDs": _stat(
+                            breakdown, "receivingTouchdowns"
+                        ),
+                        "Rushing Yards": _stat(breakdown, "rushingYards"),
+                        "Rushing TDs": _stat(breakdown, "rushingTouchdowns"),
+                        "Passing Yards": _stat(breakdown, "passingYards"),
+                        "Passing TDs": _stat(breakdown, "passingTouchdowns"),
+                        "Interceptions": _stat(
+                            breakdown, "passingInterceptions"
+                        ),
                         "Lineup Slot": slot,
                         "Eligible Slots": "|".join(
                             getattr(player, "eligibleSlots", [])
@@ -229,6 +243,10 @@ def extract_player_performances(
                 )
 
     return rows
+
+
+def _stat(breakdown: dict[str, Any], key: str) -> float:
+    return round(float(breakdown.get(key, 0) or 0), 2)
 
 
 def build_player_dataframe(
@@ -250,6 +268,15 @@ def build_player_dataframe(
         "Manager",
         "Fantasy Team",
         "Points",
+        "Receptions",
+        "Targets",
+        "Receiving Yards",
+        "Receiving TDs",
+        "Rushing Yards",
+        "Rushing TDs",
+        "Passing Yards",
+        "Passing TDs",
+        "Interceptions",
         "Lineup Slot",
         "Eligible Slots",
         "Lineup Status",
