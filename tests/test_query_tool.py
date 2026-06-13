@@ -87,6 +87,53 @@ def player_team_seasons():
     return seasons
 
 
+def trade_player_history():
+    rows = []
+    players = [
+        (1, "Patrick Mahomes II", "alex", "Alex", "A"),
+        (2, "Jared Goff", "blair", "Blair", "B"),
+    ]
+    for player_id, player, owner, manager, team in players:
+        rows.append(
+            {
+                "Season": 2022,
+                "Week": 4,
+                "Player ID": player_id,
+                "Player": player,
+                "Position": "QB",
+                "NFL Team": "KC" if player_id == 1 else "DET",
+                "Owner Key": owner,
+                "Manager": manager,
+                "Fantasy Team": team,
+                "Points": 20.0,
+                "Lineup Status": "Starter",
+            }
+        )
+        rows.append(
+            {
+                "Season": 2022,
+                "Week": 5,
+                "Player ID": player_id,
+                "Player": player,
+                "Position": "QB",
+                "NFL Team": "KC" if player_id == 1 else "DET",
+                "Owner Key": "blair" if owner == "alex" else "alex",
+                "Manager": "Blair" if owner == "alex" else "Alex",
+                "Fantasy Team": "B" if owner == "alex" else "A",
+                "Points": 25.0 if player_id == 1 else 10.0,
+                "Lineup Status": "Starter",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def trade_team_seasons():
+    seasons = team_seasons().copy()
+    seasons["Season"] = 2022
+    seasons["Trades"] = 1
+    return seasons
+
+
 def test_best_position_query_uses_season_totals():
     result = answer_query(
         "Who was the best WR in 2020?",
@@ -120,6 +167,50 @@ def test_named_player_query_returns_season_history():
     )
 
     assert "45.00" in result.answer
+
+
+def test_named_player_trade_count_handles_suffix_variants():
+    result = answer_query(
+        "How many times has Patrick Mahomes been traded?",
+        team_history(),
+        trade_team_seasons(),
+        trade_player_history(),
+    )
+
+    assert "1 inferred trade" in result.answer
+    assert "Patrick Mahomes II" in result.title
+    assert len(result.table) == 1
+
+
+def test_named_player_with_no_inferred_trades_returns_zero():
+    history = trade_player_history()
+    extra = history[history["Player"] == "Patrick Mahomes II"].copy()
+    extra["Player ID"] = 3
+    extra["Player"] = "Travis Kelce"
+    extra["Owner Key"] = "alex"
+    extra["Manager"] = "Alex"
+    extra["Fantasy Team"] = "A"
+    result = answer_query(
+        "How many times has Travis Kelce been traded?",
+        team_history(),
+        trade_team_seasons(),
+        pd.concat([history, extra], ignore_index=True),
+    )
+
+    assert "0 inferred trades" in result.answer
+    assert "historical trade ledger" in result.answer
+
+
+def test_owner_trade_query_summarizes_post_trade_record():
+    result = answer_query(
+        "How has Blair done in trades?",
+        team_history(),
+        trade_team_seasons(),
+        trade_player_history(),
+    )
+
+    assert "made 1 inferred trades" in result.answer
+    assert "1-0-0" in result.answer
 
 
 def test_most_catches_last_year_uses_latest_loaded_season():

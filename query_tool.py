@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from analytics import (
+    inferred_trade_analysis,
     lineup_efficiency,
     luck_history,
     manager_history,
@@ -94,6 +95,15 @@ def answer_query(
     )
     if draft_result is not None:
         return draft_result
+
+    trade_result = _answer_trade_query(
+        query,
+        season,
+        player_history,
+        team_seasons,
+    )
+    if trade_result is not None:
+        return trade_result
 
     player_result = _answer_player_query(query, players, player_history.empty)
     if player_result is not None:
@@ -316,6 +326,121 @@ def answer_query(
         )
 
     return _help()
+
+
+def _answer_trade_query(
+    query: str,
+    season: int | None,
+    player_history: pd.DataFrame,
+    team_seasons: pd.DataFrame,
+) -> QueryResult | None:
+    if not _contains(query, "trade", "traded", "trades", "trading", "deal"):
+        return None
+    if player_history.empty:
+        return _player_required(
+            "That trade question needs weekly player roster data."
+        )
+
+    trades = inferred_trade_analysis(player_history, team_seasons)
+    trades = _season_filter(trades, season)
+    player_name = _matching_player(query, player_history)
+    managers = _matching_managers(query, team_seasons["Manager"])
+
+    if player_name is not None:
+        selected = trades[
+            trades.apply(
+                lambda row: _player_in_trade(row, player_name),
+                axis=1,
+            )
+        ]
+        season_text = (
+            f" in {season}" if season is not None else " in the loaded archive"
+        )
+        count = len(selected)
+        if count == 0:
+            return QueryResult(
+                f"{player_name} appears in 0 inferred trades{season_text}. "
+                "This uses reciprocal week-to-week roster moves because ESPN "
+                "does not provide a complete historical trade ledger.",
+                title=f"{player_name} trade history",
+                table=selected,
+            )
+        noun = "trade" if count == 1 else "trades"
+        return QueryResult(
+            f"{player_name} appears in {count} inferred {noun}{season_text}. "
+            "The result is reconstructed from reciprocal roster moves.",
+            title=f"{player_name} trade history",
+            table=selected,
+        )
+
+    if trades.empty:
+        return QueryResult(
+            "No reciprocal roster moves could be identified as inferred trades "
+            "in the loaded seasons.",
+            title="Trade history",
+        )
+
+    if managers:
+        manager = managers[0]
+        selected = trades[
+            (trades["Manager A"] == manager)
+            | (trades["Manager B"] == manager)
+        ]
+        if selected.empty:
+            return QueryResult(
+                f"{manager} appears in 0 inferred trades in the matching seasons.",
+                title=f"{manager} trade history",
+                table=selected,
+            )
+        wins = int((selected["Winner"] == manager).sum())
+        ties = int((selected["Winner"] == "Tie").sum())
+        losses = len(selected) - wins - ties
+        return QueryResult(
+            f"{manager} made {len(selected)} inferred trades and went "
+            f"{wins}-{losses}-{ties} in post-trade value.",
+            title=f"{manager} trade history",
+            table=selected,
+        )
+
+    if _contains(
+        query,
+        "biggest",
+        "largest",
+        "best trade",
+        "most lopsided",
+        "won the most",
+        "best trader",
+    ):
+        if _contains(query, "won the most", "best trader"):
+            winners = trades[trades["Winner"] != "Tie"]
+            leaders = (
+                winners.groupby("Winner", as_index=False)
+                .size()
+                .rename(columns={"size": "Trade Wins"})
+                .sort_values("Trade Wins", ascending=False)
+            )
+            row = leaders.iloc[0]
+            return QueryResult(
+                f"{row['Winner']} has won the most inferred trades with "
+                f"{int(row['Trade Wins'])}.",
+                title="Post-trade value leaders",
+                table=leaders,
+            )
+        row = trades.loc[trades["Value Margin"].idxmax()]
+        return QueryResult(
+            f"{row['Winner']} won the most lopsided inferred trade by "
+            f"{row['Value Margin']:.2f} post-trade fantasy points in Week "
+            f"{int(row['Trade Week'])}, {int(row['Season'])}.",
+            title="Biggest post-trade value win",
+            table=pd.DataFrame([row]),
+        )
+
+    return QueryResult(
+        f"I found {len(trades)} inferred trades in the matching seasons. "
+        "These are reconstructed from reciprocal week-to-week roster moves.",
+        title="Trade history",
+        table=trades,
+    )
 
 
 def _answer_draft_query(
@@ -686,12 +811,32 @@ def _extract_position(query: str) -> str | None:
 def _matching_player(query: str, players: pd.DataFrame) -> str | None:
     if players.empty or "Player" not in players:
         return None
+    normalized_query = _normalize_player_name(query)
     names = sorted(
         set(players["Player"].dropna().astype(str)),
         key=len,
         reverse=True,
     )
-    return next((name for name in names if name.casefold() in query), None)
+    return next(
+        (
+            name
+            for name in names
+            if _normalize_player_name(name) in normalized_query
+        ),
+        None,
+    )
+
+
+def _player_in_trade(row: pd.Series, player_name: str) -> bool:
+    target = _normalize_player_name(player_name)
+    for column in ("Manager A Received", "Manager B Received"):
+        received = str(row.get(column, ""))
+        if any(
+            _normalize_player_name(name) == target
+            for name in received.split(",")
+        ):
+            return True
+    return False
 
 
 def _matching_draft_player(query: str, drafts: pd.DataFrame) -> str | None:
