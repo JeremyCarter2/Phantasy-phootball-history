@@ -213,6 +213,80 @@ def test_owner_trade_query_summarizes_post_trade_record():
     assert "1-0-0" in result.answer
 
 
+def test_trade_query_understands_swapped_synonym():
+    result = answer_query(
+        "How often was Patrick Mahomes swapped?",
+        team_history(),
+        trade_team_seasons(),
+        trade_player_history(),
+    )
+
+    assert "1 inferred trade" in result.answer
+
+
+def test_trade_detail_query_explains_both_sides():
+    result = answer_query(
+        "What was Patrick Mahomes traded for?",
+        team_history(),
+        trade_team_seasons(),
+        trade_player_history(),
+    )
+
+    assert "Blair acquired Patrick Mahomes II" in result.answer
+    assert "Alex received Jared Goff" in result.answer
+
+
+def test_player_ownership_query_lists_managers():
+    result = answer_query(
+        "Who had Alpha Receiver in 2020?",
+        team_history(),
+        player_team_seasons(),
+        player_history(),
+    )
+
+    assert "Alex" in result.answer
+    assert "Weeks Rostered" in result.table
+    assert result.interpretation
+
+
+def test_player_ownership_query_counts_distinct_owners():
+    result = answer_query(
+        "How many owners had Alpha Receiver in 2020?",
+        team_history(),
+        player_team_seasons(),
+        player_history(),
+    )
+
+    assert "1 owner" in result.answer
+
+
+def test_player_comparison_query_compares_season_points():
+    result = answer_query(
+        "Compare Alpha Receiver vs Beta Receiver in 2020",
+        team_history(),
+        player_team_seasons(),
+        player_history(),
+    )
+
+    assert "Alpha Receiver" in result.answer
+    assert "45.00" in result.answer
+    assert "versus" in result.interpretation
+
+
+def test_player_timeline_merges_draft_and_trade_history():
+    result = answer_query(
+        "Show me Patrick Mahomes draft and trade history",
+        team_history(),
+        trade_team_seasons(),
+        trade_player_history(),
+        load_all_drafts(),
+    )
+
+    assert "drafted" in result.answer
+    assert "1 inferred trade" in result.answer
+    assert {"Drafted", "Inferred trade"} <= set(result.table["Event"])
+
+
 def test_most_catches_last_year_uses_latest_loaded_season():
     result = answer_query(
         "What player had the most catches last year?",

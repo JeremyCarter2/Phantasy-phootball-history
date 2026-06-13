@@ -405,9 +405,23 @@ elif page == "Query Tool":
         "the best value pick in the 2025 draft?”, or “How many times has "
         "Patrick Mahomes been traded?”"
     )
+    quick_questions = (
+        "Who rostered Patrick Mahomes the longest?",
+        "Compare Patrick Mahomes vs Josh Allen in 2023",
+        "Show me Patrick Mahomes' full history",
+    )
+    quick_columns = st.columns(len(quick_questions))
+    for index, example in enumerate(quick_questions):
+        if quick_columns[index].button(
+            example,
+            key=f"quick-query-{index}",
+            width="stretch",
+        ):
+            st.session_state["last_query"] = example
     with st.form("archive-query"):
         question = st.text_input(
             "Question",
+            value=st.session_state.get("last_query", ""),
             placeholder="Who was the luckiest owner in 2024?",
         )
         submitted = st.form_submit_button("Search archive", type="primary")
@@ -422,6 +436,8 @@ elif page == "Query Tool":
             player_history,
             load_all_drafts(),
         )
+        if result.interpretation:
+            st.caption(f"Understood as: {result.interpretation}")
         st.subheader(result.title)
         if result.needs_players:
             st.warning(result.answer)
@@ -429,6 +445,8 @@ elif page == "Query Tool":
             st.success(result.answer)
         if not result.table.empty:
             show_table(result.table)
+        if result.suggestions:
+            st.caption("Try next: " + " | ".join(result.suggestions))
 
 elif page == "Draft History":
     st.header("Auction Draft History")

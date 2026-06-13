@@ -68,6 +68,8 @@ class QueryResult:
     title: str = "Query result"
     table: pd.DataFrame = field(default_factory=pd.DataFrame)
     needs_players: bool = False
+    interpretation: str = ""
+    suggestions: tuple[str, ...] = ()
 
 
 def answer_query(
@@ -85,6 +87,15 @@ def answer_query(
 
     if not query:
         return _help()
+
+    journey_result = _answer_player_journey_query(
+        query,
+        player_history,
+        draft_history if draft_history is not None else pd.DataFrame(),
+        team_seasons,
+    )
+    if journey_result is not None:
+        return journey_result
 
     draft_result = _answer_draft_query(
         query,
@@ -104,6 +115,24 @@ def answer_query(
     )
     if trade_result is not None:
         return trade_result
+
+    comparison_result = _answer_player_comparison_query(
+        query,
+        players,
+        player_history.empty,
+        season,
+    )
+    if comparison_result is not None:
+        return comparison_result
+
+    ownership_result = _answer_player_ownership_query(
+        query,
+        players,
+        player_history.empty,
+        season,
+    )
+    if ownership_result is not None:
+        return ownership_result
 
     player_result = _answer_player_query(query, players, player_history.empty)
     if player_result is not None:
@@ -328,13 +357,248 @@ def answer_query(
     return _help()
 
 
+def _answer_player_journey_query(
+    query: str,
+    player_history: pd.DataFrame,
+    drafts: pd.DataFrame,
+    team_seasons: pd.DataFrame,
+) -> QueryResult | None:
+    asks_for_journey = _contains(
+        query,
+        "full history",
+        "complete history",
+        "player history",
+        "journey",
+        "timeline",
+        "draft and trade",
+        "drafted and traded",
+        "draft history and trade",
+    )
+    has_mixed_intents = (
+        _contains(query, "draft", "drafted", "auction")
+        and _is_trade_query(query)
+    )
+    if not asks_for_journey and not has_mixed_intents:
+        return None
+
+    player_name = _matching_player_across_sources(query, player_history, drafts)
+    if player_name is None:
+        return QueryResult(
+            "I understood this as a player timeline question, but I could not "
+            "identify the player. Include the player's full name.",
+            title="Player timeline needs a name",
+            interpretation="Player draft and trade timeline",
+        )
+    if player_history.empty:
+        return _player_required(
+            "A complete player timeline needs weekly roster data."
+        )
+
+    target = _normalize_player_name(player_name)
+    events: list[dict[str, object]] = []
+    if not drafts.empty:
+        purchases = drafts[
+            drafts["Player"].map(_normalize_player_name) == target
+        ]
+        for _, row in purchases.iterrows():
+            events.append(
+                {
+                    "Season": int(row["Season"]),
+                    "Week": 0,
+                    "Event": "Drafted",
+                    "Owner": row["Owner"],
+                    "Other Owner": "",
+                    "Details": f"${int(row['Price'])}",
+                }
+            )
+
+    trades = inferred_trade_analysis(player_history, team_seasons)
+    for _, row in trades.iterrows():
+        if not _player_in_trade(row, player_name):
+            continue
+        a_received = _trade_side_contains(row["Manager A Received"], target)
+        events.append(
+            {
+                "Season": int(row["Season"]),
+                "Week": int(row["Trade Week"]),
+                "Event": "Inferred trade",
+                "Owner": row["Manager A"] if a_received else row["Manager B"],
+                "Other Owner": (
+                    row["Manager B"] if a_received else row["Manager A"]
+                ),
+                "Details": (
+                    row["Manager A Received"]
+                    if a_received
+                    else row["Manager B Received"]
+                ),
+            }
+        )
+
+    timeline = pd.DataFrame(events)
+    if timeline.empty:
+        return QueryResult(
+            f"No draft purchases or inferred trades were found for {player_name}.",
+            title=f"{player_name} timeline",
+            interpretation=f"Complete archive timeline for {player_name}",
+        )
+    timeline = timeline.sort_values(["Season", "Week"], ignore_index=True)
+    draft_count = int((timeline["Event"] == "Drafted").sum())
+    trade_count = int((timeline["Event"] == "Inferred trade").sum())
+    draft_noun = "time" if draft_count == 1 else "times"
+    trade_noun = "trade" if trade_count == 1 else "trades"
+    return QueryResult(
+        f"{player_name} was drafted {draft_count} {draft_noun} and appears in "
+        f"{trade_count} inferred {trade_noun} in the loaded archive.",
+        title=f"{player_name} archive timeline",
+        table=timeline,
+        interpretation=f"Draft plus inferred trade history for {player_name}",
+        suggestions=(
+            f"Who rostered {player_name} the longest?",
+            f"How many fantasy points did {player_name} score each season?",
+        ),
+    )
+
+
+def _answer_player_comparison_query(
+    query: str,
+    players: pd.DataFrame,
+    player_history_empty: bool,
+    season: int | None,
+) -> QueryResult | None:
+    if not _contains(query, "compare", " vs ", " versus ", "better"):
+        return None
+    matches = _matching_players(query, players)
+    if len(matches) < 2:
+        return None
+    if player_history_empty:
+        return _player_required("That player comparison needs box-score data.")
+
+    selected = players[
+        players["Player"].map(_normalize_player_name).isin(
+            {_normalize_player_name(name) for name in matches[:2]}
+        )
+    ]
+    leaders = build_scoring_leaders_dataframe(selected).sort_values(
+        ["Season", "Total Points"],
+        ascending=[False, False],
+    )
+    if leaders.empty:
+        return QueryResult("No matching player performances were found.")
+    totals = (
+        leaders.groupby("Player", as_index=False)
+        .agg(
+            Seasons=("Season", "nunique"),
+            **{
+                "Total Points": ("Total Points", "sum"),
+                "Average Weekly Points": ("Average Points", "mean"),
+                "Weeks Rostered": ("Weeks Rostered", "sum"),
+            },
+        )
+        .sort_values("Total Points", ascending=False)
+    )
+    totals["Total Points"] = totals["Total Points"].round(2)
+    totals["Average Weekly Points"] = totals["Average Weekly Points"].round(2)
+    leader = totals.iloc[0]
+    scope = f"in {season}" if season is not None else "in the loaded archive"
+    return QueryResult(
+        f"{leader['Player']} leads the comparison {scope} with "
+        f"{leader['Total Points']:.2f} total fantasy points.",
+        title=f"{matches[0]} vs. {matches[1]}",
+        table=leaders if season is None else totals,
+        interpretation=(
+            f"Fantasy-point comparison: {matches[0]} versus {matches[1]}"
+        ),
+        suggestions=(
+            f"What was {matches[0]}'s best week?",
+            f"What was {matches[1]}'s best week?",
+        ),
+    )
+
+
+def _answer_player_ownership_query(
+    query: str,
+    players: pd.DataFrame,
+    player_history_empty: bool,
+    season: int | None,
+) -> QueryResult | None:
+    if not _contains(
+        query,
+        "who owned",
+        "who rostered",
+        "who had",
+        "owners had",
+        "which owners",
+        "how many owners",
+        "owner history",
+        "rostered the longest",
+        "owned the longest",
+        "played for",
+    ):
+        return None
+    player_name = _matching_player(query, players)
+    if player_name is None:
+        return None
+    if player_history_empty:
+        return _player_required("That ownership question needs roster data.")
+
+    selected = players[
+        players["Player"].map(_normalize_player_name)
+        == _normalize_player_name(player_name)
+    ]
+    ownership = (
+        selected.groupby(["Season", "Manager"], as_index=False)
+        .agg(
+            **{
+                "Weeks Rostered": ("Week", "nunique"),
+                "Fantasy Points": ("Points", "sum"),
+            }
+        )
+        .sort_values(["Season", "Weeks Rostered"], ascending=[False, False])
+    )
+    ownership["Fantasy Points"] = ownership["Fantasy Points"].round(2)
+    summary = (
+        ownership.groupby("Manager", as_index=False)
+        .agg(
+            Seasons=("Season", "nunique"),
+            **{
+                "Weeks Rostered": ("Weeks Rostered", "sum"),
+                "Fantasy Points": ("Fantasy Points", "sum"),
+            },
+        )
+        .sort_values("Weeks Rostered", ascending=False)
+    )
+    leader = summary.iloc[0]
+    scope = f"in {season}" if season is not None else "in the loaded archive"
+    if _contains(query, "how many owners", "how many managers"):
+        owner_count = ownership["Manager"].nunique()
+        answer = (
+            f"{player_name} was rostered by {owner_count} "
+            f"owner{'s' if owner_count != 1 else ''} {scope}."
+        )
+    else:
+        answer = (
+            f"{leader['Manager']} rostered {player_name} the longest {scope}: "
+            f"{int(leader['Weeks Rostered'])} weeks."
+        )
+    return QueryResult(
+        answer,
+        title=f"{player_name} ownership history",
+        table=ownership,
+        interpretation=f"Fantasy owners who rostered {player_name}",
+        suggestions=(
+            f"How many times has {player_name} been traded?",
+            f"Show me {player_name}'s full history.",
+        ),
+    )
+
+
 def _answer_trade_query(
     query: str,
     season: int | None,
     player_history: pd.DataFrame,
     team_seasons: pd.DataFrame,
 ) -> QueryResult | None:
-    if not _contains(query, "trade", "traded", "trades", "trading", "deal"):
+    if not _is_trade_query(query):
         return None
     if player_history.empty:
         return _player_required(
@@ -364,6 +628,35 @@ def _answer_trade_query(
                 "does not provide a complete historical trade ledger.",
                 title=f"{player_name} trade history",
                 table=selected,
+                interpretation=f"Inferred trade count for {player_name}",
+                suggestions=(
+                    f"Who rostered {player_name} the longest?",
+                    f"Show me {player_name}'s full history.",
+                ),
+            )
+        if _contains(
+            query,
+            "who traded",
+            "traded to",
+            "traded from",
+            "what was",
+            "what did",
+            "in exchange",
+            "return package",
+        ):
+            details = [
+                _describe_player_trade(row, player_name)
+                for _, row in selected.iterrows()
+            ]
+            return QueryResult(
+                " ".join(details),
+                title=f"{player_name} trade details",
+                table=selected,
+                interpretation=f"Inferred trade details for {player_name}",
+                suggestions=(
+                    f"Who rostered {player_name} the longest?",
+                    f"Show me {player_name}'s full history.",
+                ),
             )
         noun = "trade" if count == 1 else "trades"
         return QueryResult(
@@ -371,6 +664,11 @@ def _answer_trade_query(
             "The result is reconstructed from reciprocal roster moves.",
             title=f"{player_name} trade history",
             table=selected,
+            interpretation=f"Inferred trade count for {player_name}",
+            suggestions=(
+                f"Who rostered {player_name} the longest?",
+                f"Show me {player_name}'s full history.",
+            ),
         )
 
     if trades.empty:
@@ -391,6 +689,7 @@ def _answer_trade_query(
                 f"{manager} appears in 0 inferred trades in the matching seasons.",
                 title=f"{manager} trade history",
                 table=selected,
+                interpretation=f"Post-trade value record for {manager}",
             )
         wins = int((selected["Winner"] == manager).sum())
         ties = int((selected["Winner"] == "Tie").sum())
@@ -400,6 +699,7 @@ def _answer_trade_query(
             f"{wins}-{losses}-{ties} in post-trade value.",
             title=f"{manager} trade history",
             table=selected,
+            interpretation=f"Post-trade value record for {manager}",
         )
 
     if _contains(
@@ -764,8 +1064,8 @@ def _player_required(
     message: str = "That question needs player box-score data.",
 ) -> QueryResult:
     return QueryResult(
-        f"{message} Turn on **Include player "
-        "and lineup questions** in the sidebar and reload the archive.",
+        f"{message} Open the Query Tool or another player-data section and "
+        "reload the archive.",
         title="Player data required",
         needs_players=True,
     )
@@ -809,34 +1109,91 @@ def _extract_position(query: str) -> str | None:
 
 
 def _matching_player(query: str, players: pd.DataFrame) -> str | None:
+    matches = _matching_players(query, players)
+    return matches[0] if matches else None
+
+
+def _matching_players(query: str, players: pd.DataFrame) -> list[str]:
     if players.empty or "Player" not in players:
-        return None
+        return []
     normalized_query = _normalize_player_name(query)
     names = sorted(
         set(players["Player"].dropna().astype(str)),
         key=len,
         reverse=True,
     )
-    return next(
-        (
-            name
-            for name in names
-            if _normalize_player_name(name) in normalized_query
-        ),
-        None,
-    )
+    matches = [
+        name
+        for name in names
+        if _normalize_player_name(name) in normalized_query
+    ]
+    unique: list[str] = []
+    seen: set[str] = set()
+    for name in matches:
+        normalized = _normalize_player_name(name)
+        if normalized not in seen:
+            unique.append(name)
+            seen.add(normalized)
+    return unique
+
+
+def _matching_player_across_sources(
+    query: str,
+    players: pd.DataFrame,
+    drafts: pd.DataFrame,
+) -> str | None:
+    player_name = _matching_player(query, players)
+    return player_name or _matching_draft_player(query, drafts)
 
 
 def _player_in_trade(row: pd.Series, player_name: str) -> bool:
     target = _normalize_player_name(player_name)
     for column in ("Manager A Received", "Manager B Received"):
-        received = str(row.get(column, ""))
-        if any(
-            _normalize_player_name(name) == target
-            for name in received.split(",")
-        ):
+        if _trade_side_contains(row.get(column, ""), target):
             return True
     return False
+
+
+def _trade_side_contains(received: object, normalized_player: str) -> bool:
+    return any(
+        _normalize_player_name(name) == normalized_player
+        for name in str(received).split(",")
+    )
+
+
+def _describe_player_trade(row: pd.Series, player_name: str) -> str:
+    target = _normalize_player_name(player_name)
+    manager_a_received = str(row["Manager A Received"])
+    if _trade_side_contains(manager_a_received, target):
+        receiver = row["Manager A"]
+        sender = row["Manager B"]
+        received = manager_a_received
+        return_package = row["Manager B Received"]
+    else:
+        receiver = row["Manager B"]
+        sender = row["Manager A"]
+        received = row["Manager B Received"]
+        return_package = row["Manager A Received"]
+    return (
+        f"In Week {int(row['Trade Week'])}, {int(row['Season'])}, {receiver} "
+        f"acquired {received} from {sender}; {sender} received {return_package}."
+    )
+
+
+def _is_trade_query(query: str) -> bool:
+    return _contains(
+        query,
+        "trade",
+        "traded",
+        "trades",
+        "trading",
+        "deal",
+        "dealt",
+        "swap",
+        "swapped",
+        "exchange",
+        "exchanged",
+    )
 
 
 def _matching_draft_player(query: str, drafts: pd.DataFrame) -> str | None:
