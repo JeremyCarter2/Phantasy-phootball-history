@@ -369,7 +369,8 @@ elif page == "Query Tool":
     st.caption(
         "Examples: “Who had the highest score in 2023?”, “Who has the most "
         "championships?”, “What is the rivalry between Alex Jeli and Cameron "
-        "Dixon?”, or “Who left the most points on the bench in 2025?”"
+        "Dixon?”, “Who was the best WR in 2020?”, or “What was Justin "
+        "Jefferson's highest-scoring week?”"
     )
     with st.form("archive-query"):
         question = st.text_input(

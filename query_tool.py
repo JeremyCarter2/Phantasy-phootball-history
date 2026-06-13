@@ -14,6 +14,29 @@ from analytics import (
 from espn_history import build_scoring_leaders_dataframe
 
 
+POSITION_ALIASES = {
+    "qb": "QB",
+    "quarterback": "QB",
+    "quarterbacks": "QB",
+    "rb": "RB",
+    "running back": "RB",
+    "running backs": "RB",
+    "wr": "WR",
+    "wide receiver": "WR",
+    "wide receivers": "WR",
+    "te": "TE",
+    "tight end": "TE",
+    "tight ends": "TE",
+    "k": "K",
+    "kicker": "K",
+    "kickers": "K",
+    "dst": "D/ST",
+    "d/st": "D/ST",
+    "defense": "D/ST",
+    "defenses": "D/ST",
+}
+
+
 @dataclass
 class QueryResult:
     answer: str
@@ -36,6 +59,10 @@ def answer_query(
 
     if not query:
         return _help()
+
+    player_result = _answer_player_query(query, players, player_history.empty)
+    if player_result is not None:
+        return player_result
 
     if _contains(query, "highest scoring player", "highest player", "best player game"):
         if player_history.empty:
@@ -257,6 +284,108 @@ def answer_query(
     return _help()
 
 
+def _answer_player_query(
+    query: str,
+    players: pd.DataFrame,
+    player_history_empty: bool,
+) -> QueryResult | None:
+    position = _extract_position(query)
+    player_name = _matching_player(query, players)
+    player_terms = (
+        "player",
+        "scoring leader",
+        "fantasy points",
+        "best week",
+        "highest game",
+        "highest scoring",
+        "most points",
+    )
+    is_player_query = (
+        position is not None
+        or player_name is not None
+        or _contains(query, *player_terms)
+    )
+    if not is_player_query:
+        return None
+    if player_history_empty:
+        return _player_required()
+    if players.empty:
+        return QueryResult("No player data was available for that season.")
+
+    filtered = players.copy()
+    if position is not None:
+        filtered = filtered[filtered["Position"] == position]
+    if player_name is not None:
+        filtered = filtered[
+            filtered["Player"].str.casefold() == player_name.casefold()
+        ]
+    if _contains(query, "starter", "started", "starting"):
+        filtered = filtered[filtered["Lineup Status"] == "Starter"]
+    elif _contains(query, "bench", "benched"):
+        filtered = filtered[filtered["Lineup Status"] == "Bench/IR"]
+    if filtered.empty:
+        detail = f" at {position}" if position else ""
+        return QueryResult(f"No matching player performances were found{detail}.")
+
+    top_n = _extract_top_n(query)
+    weekly = _contains(
+        query,
+        "game",
+        "week",
+        "performance",
+        "single game",
+        "single-game",
+    )
+    lowest = _contains(query, "worst", "lowest", "fewest")
+
+    if player_name is not None and not weekly:
+        by_season = build_scoring_leaders_dataframe(filtered)
+        by_season = by_season.sort_values(
+            "Total Points", ascending=lowest
+        ).head(top_n)
+        row = by_season.iloc[0]
+        return QueryResult(
+            answer=(
+                f"{row['Player']} scored {row['Total Points']:.2f} total "
+                f"fantasy points in {int(row['Season'])}, averaging "
+                f"{row['Average Points']:.2f} across "
+                f"{int(row['Weeks Rostered'])} weeks."
+            ),
+            title=f"{player_name} season history",
+            table=by_season,
+        )
+
+    if weekly:
+        board = filtered.sort_values("Points", ascending=lowest).head(top_n)
+        row = board.iloc[0]
+        position_text = f" {position}" if position else ""
+        direction = "lowest" if lowest else "highest"
+        return QueryResult(
+            answer=(
+                f"{row['Player']} had the {direction}{position_text} weekly "
+                f"performance with {row['Points']:.2f} points in Week "
+                f"{int(row['Week'])}, {int(row['Season'])}."
+            ),
+            title=f"{direction.title()} weekly player performances",
+            table=board,
+        )
+
+    leaders = build_scoring_leaders_dataframe(filtered)
+    leaders = leaders.sort_values("Total Points", ascending=lowest).head(top_n)
+    row = leaders.iloc[0]
+    position_text = position or "player"
+    direction = "lowest-scoring" if lowest else "best"
+    return QueryResult(
+        answer=(
+            f"{row['Player']} was the {direction} {position_text} in "
+            f"{int(row['Season'])} with {row['Total Points']:.2f} total "
+            f"fantasy points."
+        ),
+        title=f"{position_text} season leaders",
+        table=leaders,
+    )
+
+
 def _help() -> QueryResult:
     return QueryResult(
         "I could not confidently match that question yet. Try asking about "
@@ -299,3 +428,28 @@ def _season_filter(frame: pd.DataFrame, season: int | None) -> pd.DataFrame:
 def _matching_managers(query: str, managers: pd.Series) -> list[str]:
     names = sorted(set(managers.dropna().astype(str)), key=len, reverse=True)
     return [name for name in names if name.lower() in query]
+
+
+def _extract_position(query: str) -> str | None:
+    for alias in sorted(POSITION_ALIASES, key=len, reverse=True):
+        if re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", query):
+            return POSITION_ALIASES[alias]
+    return None
+
+
+def _matching_player(query: str, players: pd.DataFrame) -> str | None:
+    if players.empty or "Player" not in players:
+        return None
+    names = sorted(
+        set(players["Player"].dropna().astype(str)),
+        key=len,
+        reverse=True,
+    )
+    return next((name for name in names if name.casefold() in query), None)
+
+
+def _extract_top_n(query: str) -> int:
+    match = re.search(r"\btop\s+(\d{1,2})\b", query)
+    if not match:
+        return 10
+    return min(50, max(1, int(match.group(1))))
