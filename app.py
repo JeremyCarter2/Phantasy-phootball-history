@@ -31,11 +31,20 @@ from espn_history import (
 )
 from reports import archive_html_report, csv_download
 from query_tool import answer_query
+from draft_history import (
+    available_draft_seasons,
+    draft_value,
+    load_draft_history,
+    owner_draft_summary,
+    owner_draft_value,
+    position_spend,
+)
 
 
 PAGES = [
     "Overview",
     "Query Tool",
+    "Draft History",
     "Leaderboards",
     "Owners",
     "Luck & All-Play",
@@ -220,7 +229,12 @@ with st.sidebar:
         if page == "Query Tool"
         else False
     )
-    include_players = page in PLAYER_PAGES or query_players or (
+    draft_players = (
+        st.toggle("Include post-draft value", value=False)
+        if page == "Draft History"
+        else False
+    )
+    include_players = page in PLAYER_PAGES or query_players or draft_players or (
         page == "Leaderboards"
         and st.toggle("Include player leaderboards", value=False)
     )
@@ -414,6 +428,90 @@ elif page == "Query Tool":
             st.success(result.answer)
         if not result.table.empty:
             show_table(result.table)
+
+elif page == "Draft History":
+    st.header("Auction Draft History")
+    draft_seasons = available_draft_seasons()
+    if not draft_seasons:
+        st.info("No draft exports have been added yet.")
+    else:
+        draft_season = st.selectbox("Draft season", draft_seasons)
+        draft = load_draft_history(draft_season)
+        summary = owner_draft_summary(draft)
+        st.caption(
+            "Auction prices come from the ESPN draft export. Owner names are "
+            "matched to the league archive."
+        )
+        metrics = st.columns(4)
+        metrics[0].metric("Owners", draft["Owner"].nunique())
+        metrics[1].metric("Players drafted", len(draft))
+        metrics[2].metric("Budget per owner", f"${summary['Spend'].median():.0f}")
+        metrics[3].metric(
+            "Highest price",
+            f"${draft['Price'].max():.0f}",
+            draft.loc[draft["Price"].idxmax(), "Player"],
+        )
+
+        st.subheader("Owner spending")
+        show_table(summary)
+        st.bar_chart(
+            summary.sort_values("Highest Price").set_index("Owner")[
+                "Highest Price"
+            ],
+            horizontal=True,
+            color="#386b52",
+        )
+
+        st.subheader("Position spending")
+        spend = position_spend(draft)
+        position_chart = spend.pivot(
+            index="Owner", columns="Position", values="Spend"
+        ).fillna(0)
+        st.bar_chart(position_chart)
+        show_table(spend)
+
+        st.subheader("All purchases")
+        owner_filter = st.multiselect(
+            "Filter owners", sorted(draft["Owner"].unique())
+        )
+        position_filter = st.multiselect(
+            "Filter positions", sorted(draft["Position"].unique())
+        )
+        filtered_draft = draft
+        if owner_filter:
+            filtered_draft = filtered_draft[
+                filtered_draft["Owner"].isin(owner_filter)
+            ]
+        if position_filter:
+            filtered_draft = filtered_draft[
+                filtered_draft["Position"].isin(position_filter)
+            ]
+        show_table(
+            filtered_draft.sort_values(
+                ["Price", "Owner"], ascending=[False, True]
+            ),
+            height=650,
+        )
+
+        value = draft_value(draft, player_history)
+        if value.empty:
+            st.info(
+                "Turn on **Include post-draft value** and reload an archive "
+                f"that includes {draft_season} to compare auction cost with "
+                "season fantasy points."
+            )
+        else:
+            st.subheader("Post-season draft value")
+            st.caption(
+                "Points per dollar uses each drafted player's total fantasy "
+                "points in the league's scoring system."
+            )
+            show_table(owner_draft_value(value))
+            show_table(
+                value[
+                    value["Total Points"].notna()
+                ].sort_values("Points / $", ascending=False).head(50)
+            )
 
 elif page == "Leaderboards":
     st.header(f"Leaderboards | {season_label}")

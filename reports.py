@@ -12,6 +12,11 @@ from analytics import (
     transaction_summary,
 )
 from espn_history import build_scoring_leaders_dataframe
+from draft_history import (
+    available_draft_seasons,
+    load_draft_history,
+    owner_draft_summary,
+)
 
 
 HIDDEN_COLUMNS = {
@@ -53,6 +58,17 @@ def archive_html_report(
             team_history.sort_values("Score", ascending=False).head(50),
         ),
     ]
+    for draft_season in available_draft_seasons():
+        draft = load_draft_history(draft_season)
+        sections.extend(
+            [
+                (
+                    f"{draft_season} Draft Owner Spending",
+                    owner_draft_summary(draft),
+                ),
+                (f"{draft_season} Draft Purchases", draft),
+            ]
+        )
     if not player_history.empty:
         sections.extend(
             [

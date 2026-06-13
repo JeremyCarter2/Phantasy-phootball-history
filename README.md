@@ -6,6 +6,7 @@ A private-league history dashboard for ESPN league `682600`. It includes:
 
 - Weekly owner-score and player leaderboards
 - Plain-English archive queries with deterministic, source-data answers
+- Auction draft history, owner spending, and post-season points-per-dollar
 - Player season scoring leaders using each season's league settings
 - All-time owner records, championships, and playoff appearances
 - All-play records and schedule-luck estimates
